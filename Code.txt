@@ -1,0 +1,207 @@
+# Install & Import Libraries
+!pip install datasets nltk wordcloud
+
+# Core libraries
+import pandas as pd
+import numpy as np
+
+# Hugging Face dataset loader
+from datasets import load_dataset
+
+# NLP libraries
+import nltk
+import re
+import string
+
+# Visualisation
+import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud
+
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+
+nltk.download("punkt")
+nltk.download("stopwords")
+nltk.download("wordnet")
+nltk.download("punkt_tab")
+
+# ML libraries
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, roc_auc_score, confusion_matrix, classification_report
+)
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+
+# Load dataset
+dataset = load_dataset("polsci/fake-news")
+
+# Convert to DataFrame
+df = pd.DataFrame(dataset["train"])
+
+df.head()
+
+# Dataset shape
+print("Dataset shape:", df.shape)
+
+# Descriptive visualisation
+label_count = df['label'].value_counts() # Count of each class
+
+labels = ['Fake News', 'Real News'] # labels to news articles
+
+plt.figure(figsize=(6,6)) # plot the count
+plt.pie(
+    label_count,
+    labels=labels,
+    autopct='%1.1f%%',
+    startangle=90,
+    explode=(0.05, 0.05)
+)
+plt.title('Proportion of Fake and Real News Articles')
+plt.axis('equal')
+plt.show()
+
+# Text Preprocessing
+stop_words = set(stopwords.words("english"))
+lemmatizer = WordNetLemmatizer()
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r"http\S+|www\S+", "", text)
+    text = text.translate(str.maketrans("", "", string.punctuation))
+    tokens = word_tokenize(text)
+    tokens = [
+        lemmatizer.lemmatize(word)
+        for word in tokens
+        if word.isalpha() and word not in stop_words
+    ]
+    return " ".join(tokens)
+
+# Apply pre-processing function
+df["clean_text"] = df["text"].apply(preprocess_text)
+df[["text", "clean_text"]].head()
+
+# Train_test_split
+
+X = df["clean_text"]
+y = df["label"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y,
+    test_size=0.2,
+    random_state=42,
+    stratify=y
+)
+
+# Feature Extraction (TF-IDF)
+tfidf = TfidfVectorizer(
+    max_features=3000,
+    ngram_range=(1, 2)
+)
+
+X_train_tfidf = tfidf.fit_transform(X_train)
+X_test_tfidf  = tfidf.transform(X_test)
+
+# Rule-Based Classifier (Baseline)
+fake_keywords = [
+    "fake", "hoax", "fraud", "conspiracy",
+    "lie", "scam", "deception", "misleading"
+]
+
+def rule_based_classifier(text):
+    for word in fake_keywords:
+        if word in text:
+            return 1  # Fake
+    return 0  # Legit
+
+rule_preds = X_test.apply(rule_based_classifier)
+
+# Logistics Regression
+
+lr = LogisticRegression(max_iter=1000)
+lr.fit(X_train_tfidf, y_train)
+
+lr_preds = lr.predict(X_test_tfidf)
+
+# Support Vector Machine (SVM)
+
+svm = LinearSVC()
+svm.fit(X_train_tfidf, y_train)
+
+svm_preds = svm.predict(X_test_tfidf)
+
+# Evaluation Metrics
+def evaluate_model(name, y_true, y_pred):
+    print(f"\n{name}")
+    print("Accuracy :", accuracy_score(y_true, y_pred))
+    print("Precision:", precision_score(y_true, y_pred))
+    print("Recall   :", recall_score(y_true, y_pred))
+    print("F1-score :", f1_score(y_true, y_pred))
+    print("ROC-AUC scpre :", roc_auc_score(y_test, y_pred))
+    print("Confusion Matrix:\n", confusion_matrix(y_true, y_pred))
+
+# Performance evaluation
+evaluate_model("Rule-Based", y_test, rule_preds)
+evaluate_model("Logistic Regression", y_test, lr_preds)
+evaluate_model("SVM", y_test, svm_preds)
+
+# Visualisation: Word-cloud
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+
+fake_text = " ".join(df[df["label"] == 1]["clean_text"])
+
+wordcloud = WordCloud(
+    width=800,
+    height=400,
+    background_color="white"
+).generate(fake_text)
+
+plt.figure(figsize=(10, 5))
+plt.imshow(wordcloud, interpolation="bilinear")
+plt.axis("off")
+plt.title("Word Cloud – Fake News")
+plt.show()
+
+# Create a DataFrame with predictions
+pred_df = pd.DataFrame({
+    "Actual": y_test.values,
+    "Rule-Based": rule_preds.values,
+    "Logistic Regression": lr_preds,
+    "SVM": svm_preds
+})
+
+pred_df.head()
+
+# Compute Class Distribution per Model
+def prediction_distribution(series):
+    return series.value_counts(normalize=True).sort_index()
+
+dist_df = pd.DataFrame({
+    model: prediction_distribution(pred_df[model])
+    for model in ["Rule-Based", "Logistic Regression", "SVM"]
+})
+
+# Rename index for clarity
+dist_df.index = ["Legit (0)", "Fake (1)"]
+
+dist_df
+
+# Sentiment / Class Distribution Plot
+
+dist_df.T.plot(
+    kind="bar",
+    figsize=(10, 6)
+)
+
+plt.title("Prediction Distribution Across Models\n")
+plt.xlabel("\nModel")
+plt.ylabel("Proportion of Predictions")
+plt.xticks(rotation=0)
+plt.legend(title="Class")
+plt.tight_layout()
+plt.show()
